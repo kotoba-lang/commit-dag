@@ -1,7 +1,7 @@
 (ns commit-dag.core-test
   (:require [clojure.test :refer [deftest is testing]]
             [cbor.core :as cbor]
-            [multiformats.core :as mf]
+            [ipld.core :as ipld]
             [commit-dag.core :as cd]))
 
 (defn- mem-store []
@@ -49,7 +49,7 @@
     (is (true? (cd/verify-chain get-fn c2)) "untampered 3-commit chain verifies")
     ;; corrupt the bytes returned for c0 WITHOUT changing c0's own cid key --
     ;; a store implementer's bug or an actively dishonest backend.
-    (swap! store assoc c0 (cbor/encode {"state" "root-EVIL" "prev" "" "seq" 0}))
+    (swap! store assoc c0 (cbor/encode {"state" "root-EVIL" "prev" nil "seq" 0}))
     (is (false? (cd/verify-chain get-fn c2)) "tampering anywhere in the chain is caught")))
 
 (deftest verify-chain-detects-seq-gaps
@@ -59,7 +59,21 @@
     ;; splice a bogus seq into c1's own record and re-house it under a freshly
     ;; recomputed cid, so the tamper-evidence check in the PREVIOUS test
     ;; wouldn't catch this on its own -- only the seq-monotonicity check does.
-    (let [bogus-bytes (cbor/encode {"state" "root-b" "prev" c0 "seq" 5})
-          bogus-cid (mf/cidv1-dag-cbor bogus-bytes)]
+    (let [bogus-bytes (ipld/encode {"state" "root-b" "prev" (ipld/link c0) "seq" 5})
+          bogus-cid (ipld/cid bogus-bytes)]
       (swap! store assoc bogus-cid bogus-bytes)
       (is (false? (cd/verify-chain get-fn bogus-cid))))))
+
+(deftest prev-is-a-real-ipld-link-on-block
+  (let [{:keys [put! get-fn]} (mem-store)
+        c0 (cd/commit! put! get-fn "root-a" nil)
+        c1 (cd/commit! put! get-fn (ipld/link c0) c0)   ; state with a link in it
+        node (ipld/decode (get-fn c1))]
+    (is (ipld/link? (get node "prev")))
+    (is (= c0 (ipld/link-cid (get node "prev"))))
+    (testing "genesis prev is null, not empty string"
+      (is (nil? (get (ipld/decode (get-fn c0)) "prev"))))
+    (testing "a linked state is walkable generically: prev + state both surface"
+      (is (= [c0 c0] (ipld/links node))))
+    (testing "commit-info returns the state Link intact"
+      (is (= (ipld/link c0) (:state (cd/commit-info get-fn c1)))))))

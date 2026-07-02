@@ -14,11 +14,16 @@
 ;; bytes -> ignored) and `get-fn` (cid -> bytes), so a caller building on both
 ;; libraries shares one block store without any adapter glue.
 (ns commit-dag.core
-  (:require [multiformats.core :as mf]
-            [cbor.core :as cbor]))
+  (:require [ipld.core :as ipld]))
 
+;; `prev` is a REAL tag-42 IPLD link (null at genesis) via kotoba-lang/ipld --
+;; this replaced the first landing's plain-CID-string ("" at genesis) encoding;
+;; every commit CID changed (clean break, pre-production, see superproject ADR).
+;; `state` stays opaque: a plain value passes through untouched, and a caller
+;; that wants its state's references walkable simply puts `ipld/link` values
+;; inside it (kotobase-engine links its quad-store snapshot CID this way).
 (defn- encode-commit [state prev-cid seq]
-  (cbor/encode {"state" state "prev" (or prev-cid "") "seq" seq}))
+  (ipld/encode {"state" state "prev" (some-> prev-cid ipld/link) "seq" seq}))
 
 (defn commit!
   "Append a `{state, prev, seq}` commit, calling `(put! cid bytes)`. Returns
@@ -26,10 +31,10 @@
    otherwise `seq` is `(inc (:seq prev-commit))`."
   [put! get-fn state prev-cid]
   (let [seq (if prev-cid
-              (inc (long (get (cbor/decode (get-fn prev-cid)) "seq")))
+              (inc (long (get (ipld/decode (get-fn prev-cid)) "seq")))
               0)
         bytes (encode-commit state prev-cid seq)
-        cid (mf/cidv1-dag-cbor bytes)]
+        cid (ipld/cid bytes)]
     (put! cid bytes)
     cid))
 
@@ -37,9 +42,11 @@
   "Decode the commit at `cid` into `{:cid :state :prev :seq}`. `:prev` is nil
    at genesis."
   [get-fn cid]
-  (let [m (cbor/decode (get-fn cid))
+  (let [m (ipld/decode (get-fn cid))
         prev (get m "prev")]
-    {:cid cid :state (get m "state") :prev (when (seq prev) prev) :seq (get m "seq")}))
+    {:cid cid :state (get m "state")
+     :prev (some-> prev ipld/link-cid)
+     :seq (get m "seq")}))
 
 (defn chain
   "Walk commit history from `cid` back to genesis via `:prev` links. Returns a
@@ -62,7 +69,7 @@
   (let [entries (chain get-fn cid)]
     (and (seq entries)
          (every? (fn [{:keys [cid state prev seq]}]
-                   (= cid (mf/cidv1-dag-cbor (encode-commit state prev seq))))
+                   (= cid (ipld/cid (encode-commit state prev seq))))
                  entries)
          (= (map :seq entries) (range (count entries))))))
 

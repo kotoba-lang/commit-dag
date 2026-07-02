@@ -1,7 +1,11 @@
 # commit-dag
 
 **Parent-linked, content-addressed commit chain — pure Clojure, no native deps,
-babashka-friendly.** Wave 1/2 of
+babashka-friendly.** `prev` is a **real tag-42 IPLD link** (null at genesis)
+via [`kotoba-lang/ipld`](https://github.com/kotoba-lang/ipld); `state` stays
+opaque, and callers that want a walkable state simply put `ipld/link` values
+inside it. This replaced the first landing's plain-CID-string encoding —
+every commit CID changed (clean break, pre-production, see superproject ADR). Wave 1/2 of
 [ADR-2607022600](https://github.com/com-junkawasaki/root/blob/main/90-docs/adr/2607022600-kotoba-database-crates-cljc-migration-roadmap.md)
 (migrating the removed `kotoba-lang/kotoba` Rust database crates to CLJC).
 
